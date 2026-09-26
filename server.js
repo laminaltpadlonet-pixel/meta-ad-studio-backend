@@ -9,9 +9,11 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-// Számlázz.js Kliens inicializálása
+// Számlázz.js Kliens inicializálása (Auth Token használatával)
 const szamlaClient = new Szamlazz.Client({
-  authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN,
+  user: {
+    authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN
+  },
   eInvoice: true,
   requestInvoiceDownload: false
 });
