@@ -8,18 +8,6 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-// Számlázz.js Kliens biztonságos inicializálása (fall-back tokennel az indítási hiba ellen)
-const authToken = process.env.SZAMLAZZ_HUB_AUTH_TOKEN || 'fallback_token';
-
-const szamlaClient = new Szamlazz.Client({
-  user: {
-    authToken: authToken
-  },
-  authToken: authToken,
-  eInvoice: true,
-  requestInvoiceDownload: false
-});
-
 const REVOLUT_API_URL = 'https://merchant.revolut.com/api/1.0';
 
 app.get('/', (req, res) => {
@@ -56,7 +44,7 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// 2. Revolut Webhook – Számlázz.hu E-számla
+// 2. Revolut Webhook – Számla kiállítása fizetés után
 app.post('/revolut-webhook', async (req, res) => {
   try {
     const event = req.body;
@@ -66,6 +54,13 @@ app.post('/revolut-webhook', async (req, res) => {
       const customerEmail = order.customer?.email || 'vasarlo@email.hu';
       
       console.log(`[REVOLUT FIZETÉS SIKERES] Számla generálása: ${customerEmail}`);
+
+      // Kliens létrehozása közvetlenül a számlázás előtt
+      const szamlaClient = new Szamlazz.Client({
+        authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN || '',
+        eInvoice: true,
+        requestInvoiceDownload: false
+      });
 
       const seller = new Szamlazz.Seller({
         bank: { name: 'Revolut Bank', accountNumber: process.env.SELLER_IBAN || 'HU00000000000000000000000000' },
@@ -101,7 +96,7 @@ app.post('/revolut-webhook', async (req, res) => {
       });
 
       await szamlaClient.issueInvoice(invoice);
-      console.log(' Számlázz.js E-számla sikeresen kiállítva!');
+      console.log('Számlázz.js E-számla sikeresen kiállítva!');
     }
 
     res.status(200).send('OK');
