@@ -10,6 +10,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "szamlazz.js": "^1.6.0"
+    "szamlazz.js": "^1.0.0"
   }
 }
