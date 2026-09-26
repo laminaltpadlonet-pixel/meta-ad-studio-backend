@@ -1,110 +1,85 @@
 require('dotenv').config();
 const express = require('express');
-const Szamlazz = require('szamlazz.js');
 const cors = require('cors');
+const fetch = require('node-fetch'); // Ha Node.js v18+ verziót használsz, ez a sor elhagyható
 
 const app = express();
 
-app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
+// 1. CORS BEÁLLÍTÁSOK (Kezeli a lezáró perjelet is a FRONTEND_URL-ben)
+const rawFrontendUrl = process.env.FRONTEND_URL || '*';
+const cleanedFrontendUrl = rawFrontendUrl.replace(/\/$/, ""); // Eltávolítja a lezáró perjelet, ha van[cite: 3]
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin || cleanedFrontendUrl === '*' || origin === cleanedFrontendUrl) {
+            callback(null, true);
+        } else {
+            callback(new Error('CORS politika által letiltva'));
+        }
+    },
+    credentials: true
+}));
+
 app.use(express.json({ limit: '10mb' }));
 
-const REVOLUT_API_URL = 'https://merchant.revolut.com/api/1.0';
+// 2. REVOLUT API ALAP-BEÁLLÍTÁSOK
+const REVOLUT_API_URL = process.env.REVOLUT_ENV === 'sandbox' 
+    ? 'https://sandbox-merchant.revolut.com/api/1.0' 
+    : 'https://merchant.revolut.com/api/1.0';
 
+// Teszt végpont a szerver működésének ellenőrzéséhez
 app.get('/', (req, res) => {
-  res.send('Meta Ad Studio Revolut Backend fut!');
+    res.send('A Render Backend Szerver sikeresen fut!');
 });
 
-// 1. Revolut Checkout Session létrehozása (1 990 Ft)
+// 3. FIZETÉSI MUNKAMENET LÉTREHOZÁSA (FŐ VÉGPONT)
 app.post('/create-checkout-session', async (req, res) => {
-  try {
-    const response = await fetch(`${REVOLUT_API_URL}/orders`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.REVOLUT_SECRET_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        amount: 199000,
-        currency: 'HUF',
-        description: '1x Meta Hirdetési Csomag & Generálás',
-        redirect_url: `${process.env.FRONTEND_URL}/?status=success`
-      })
-    });
+    try {
+        const { companyName, offer, goal, location, budget } = req.body;
 
-    const data = await response.json();
+        // Kérés küldése a Revolut Merchant API felé
+        const response = await fetch(`${REVOLUT_API_URL}/orders`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.REVOLUT_SECRET_KEY}`,
+                'Content-Type': 'application/json',
+                'Revolut-Api-Version': '2023-09-01'
+            },
+            body: JSON.stringify({
+                amount: 199000, // 1 990 Ft (fillérben/centben megadva)
+                currency: 'HUF',
+                description: `Meta Ad Studio - ${companyName || 'Pro'}`
+            })
+        });
 
-    if (!response.ok) {
-      throw new Error(data.message || 'Revolut fizetési hiba történt');
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error('Revolut API Hiba:', data);
+            return res.status(response.status).json({ error: 'Revolut fizetési hiba', details: data });
+        }
+
+        // Visszaküldjük a frontendnek a rendelés adatait és a fizetési linket
+        res.json({
+            checkoutUrl: data.checkout_url,
+            id: data.id,
+            token: data.token
+        });
+
+    } catch (error) {
+        console.error('Szerver hiba a checkout során:', error);
+        res.status(500).json({ error: 'Belső szerverhiba történt a fizetés indításakor.' });
     }
-
-    res.json({ url: data.checkout_url });
-  } catch (error) {
-    console.error('Revolut Checkout Hiba:', error);
-    res.status(500).json({ error: error.message });
-  }
 });
 
-// 2. Revolut Webhook – Számla kiállítása fizetés után
-app.post('/revolut-webhook', async (req, res) => {
-  try {
-    const event = req.body;
-
-    if (event.event === 'ORDER_COMPLETED') {
-      const order = event.data;
-      const customerEmail = order.customer?.email || 'vasarlo@email.hu';
-      
-      console.log(`[REVOLUT FIZETÉS SIKERES] Számla generálása: ${customerEmail}`);
-
-      // Kliens létrehozása közvetlenül a számlázás előtt
-      const szamlaClient = new Szamlazz.Client({
-        authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN || '',
-        eInvoice: true,
-        requestInvoiceDownload: false
-      });
-
-      const seller = new Szamlazz.Seller({
-        bank: { name: 'Revolut Bank', accountNumber: process.env.SELLER_IBAN || 'HU00000000000000000000000000' },
-        email: { replyTo: process.env.SELLER_EMAIL || 'info@a-te-ceged.hu' }
-      });
-
-      const buyer = new Szamlazz.Buyer({
-        name: order.customer?.name || 'Vásárló',
-        email: customerEmail,
-        sendEmail: true,
-        country: 'Magyarország',
-        zip: '1000',
-        city: 'Budapest',
-        address: 'Cím nem megadott'
-      });
-
-      const item = new Szamlazz.Item({
-        label: 'Meta Hirdetés Generálási Szolgáltatás',
-        quantity: 1,
-        unit: 'db',
-        vat: process.env.SZAMLAZZ_VAT || 'AAM',
-        netUnitPrice: 1990,
-        itemComment: 'Automata AI Hirdetésgenerálás'
-      });
-
-      const invoice = new Szamlazz.Invoice({
-        paymentMethod: Szamlazz.PaymentMethod.Bankcard,
-        currency: Szamlazz.Currency.HUF,
-        seller: seller,
-        buyer: buyer,
-        items: [item],
-        paid: true
-      });
-
-      await szamlaClient.issueInvoice(invoice);
-      console.log('Számlázz.js E-számla sikeresen kiállítva!');
-    }
-
-    res.status(200).send('OK');
-  } catch (err) {
-    console.error('Webhook hiba:', err);
-    res.status(500).send('Server Error');
-  }
+// 4. ALIAS ÁTIRÁNYÍTÁS: Ha a frontend még a régi /create-order címet hívja[cite: 5, 6]
+app.post('/create-order', (req, res, next) => {
+    req.url = '/create-checkout-session';
+    app._router.handle(req, res, next);
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Szerver fut a ${PORT}-es porton...`));
+// 5. SZERVER INDÍTÁSA
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`A szerver sikeresen elindult a ${PORT}-es porton`);
+});
