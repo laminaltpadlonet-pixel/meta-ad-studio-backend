@@ -1,22 +1,12 @@
 require('dotenv').config();
 const express = require('express');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const Szamlazzhu = require('szamlazzhu');
 const cors = require('cors');
 
 const app = express();
 
-// CORS engedélyezése a frontend weboldaladhoz
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
-
-// Raw body parser a Stripe Webhookhoz
-app.use((req, res, next) => {
-  if (req.originalUrl === '/stripe-webhook') {
-    next();
-  } else {
-    express.json({ limit: '10mb' })(req, res, next);
-  }
-});
+app.use(express.json({ limit: '10mb' }));
 
 // Számlázz.hu Kliens
 const szamlaClient = new Szamlazzhu.Client({
@@ -25,83 +15,75 @@ const szamlaClient = new Szamlazzhu.Client({
   requestInvoiceDownload: false
 });
 
-// Alapértelmezett teszt végpont
+const REVOLUT_API_URL = 'https://merchant.revolut.com/api/1.0'; // Éles Revolut API URL
+
 app.get('/', (req, res) => {
-  res.send('Meta Ad Studio Backend fut!');
+  res.send('Meta Ad Studio Revolut Backend fut!');
 });
 
-// 1. Stripe Checkout Munkamenet Létrehozása (1 990 Ft)
+// 1. Revolut Fizetési Megrendelés Létrehozása (1 990 Ft)
 app.post('/create-checkout-session', async (req, res) => {
   try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      billing_address_collection: 'required',
-      line_items: [
-        {
-          price_data: {
-            currency: 'huf',
-            product_data: {
-              name: '1x Meta Hirdetési Csomag & Generálás',
-              description: 'AI A/B szövegek, célzások és beállítási útmutató'
-            },
-            unit_amount: 199000 // 1 990 Ft fillérben
-          },
-          quantity: 1,
-        },
-      ],
-      mode: 'payment',
-      success_url: `${process.env.FRONTEND_URL}/?status=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/?status=cancel`,
+    const response = await fetch(`${REVOLUT_API_URL}/orders`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.REVOLUT_SECRET_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        amount: 199000, // 1 990 Ft fillérben/centben
+        currency: 'HUF',
+        description: '1x Meta Hirdetési Csomag & Generálás',
+        redirect_url: `${process.env.FRONTEND_URL}/?status=success`
+      })
     });
 
-    res.json({ id: session.id, url: session.url });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Revolut hiba történt');
+    }
+
+    // Visszaküldjük a fizetési oldalt (checkout_url) a frontendnek
+    res.json({ url: data.checkout_url });
   } catch (error) {
-    console.error('Checkout Hiba:', error);
+    console.error('Revolut Checkout Hiba:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// 2. Stripe Webhook – Automatikus Számlázz.hu E-számla
-app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event;
-
+// 2. Revolut Webhook – Automatikus Számlázz.hu E-számla
+app.post('/revolut-webhook', async (req, res) => {
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error(`Webhook aláírási hiba: ${err.message}`);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
+    const event = req.body;
 
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const customerEmail = session.customer_details?.email;
-    const customerName = session.customer_details?.name || 'Vásárló';
-    const address = session.customer_details?.address || {};
+    // Ha a fizetés sikeresen megtörtént
+    if (event.event === 'ORDER_COMPLETED') {
+      const order = event.data;
+      const customerEmail = order.customer?.email || 'vasarlo@email.hu';
+      
+      console.log(`[REVOLUT FIZETÉS SIKERES] Számla generálása: ${customerEmail}`);
 
-    console.log(`[FIZETÉS SIKERES] Számla generálása: ${customerName} (${customerEmail})`);
-
-    try {
       const seller = new Szamlazzhu.Seller({
-        bank: { name: 'OTP Bank', accountNumber: '11700000-00000000' },
+        bank: { name: 'Revolut Bank', accountNumber: process.env.SELLER_IBAN || 'HU00000000000000000000000000' },
         email: { replyTo: process.env.SELLER_EMAIL || 'info@a-te-ceged.hu' }
       });
 
       const buyer = new Szamlazzhu.Buyer({
-        name: customerName,
+        name: order.customer?.name || 'Vásárló',
         email: customerEmail,
         sendEmail: true,
-        country: address.country || 'Magyarország',
-        zip: address.postal_code || '1000',
-        city: address.city || 'Budapest',
-        address: `${address.line1 || ''} ${address.line2 || ''}`.trim() || 'Cím nem megadott'
+        country: 'Magyarország',
+        zip: '1000',
+        city: 'Budapest',
+        address: 'Cím nem megadott'
       });
 
       const item = new Szamlazzhu.Item({
         label: 'Meta Hirdetés Generálási Szolgáltatás',
         quantity: 1,
         unit: 'db',
-        vat: process.env.SZAMLAZZ_VAT || 'AAM', // '27' ha áfás vagy, 'AAM' ha alanyi mentes
+        vat: process.env.SZAMLAZZ_VAT || 'AAM',
         netUnitPrice: 1990,
         itemComment: 'Automata AI Hirdetésgenerálás'
       });
@@ -116,23 +98,13 @@ app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (re
       });
 
       await szamlaClient.issueInvoice(invoice);
-      console.log(' Számlázz.hu E-számla sikeresen kiállítva és elküldve!');
-    } catch (szamlaErr) {
-      console.error(' Hiba a számla kiállításakor:', szamlaErr);
+      console.log(' Számlázz.hu E-számla sikeresen kiállítva!');
     }
-  }
 
-  res.json({ received: true });
-});
-
-// 3. Fizetés ellenőrzése
-app.get('/verify-payment', async (req, res) => {
-  const { session_id } = req.query;
-  try {
-    const session = await stripe.checkout.sessions.retrieve(session_id);
-    res.json({ paid: session.payment_status === 'paid' });
-  } catch (e) {
-    res.json({ paid: false });
+    res.status(200).send('Webhook fogadva');
+  } catch (err) {
+    console.error('Webhook hiba:', err);
+    res.status(500).send('Server Error');
   }
 });
 
