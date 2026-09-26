@@ -5,22 +5,18 @@ const cors = require('cors');
 
 const app = express();
 
-// CORS engedélyezése a frontendhez
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-// Számlázz.js Kliens inicializálása (Auth Token használatával)
+// Számlázz.js Kliens helyes konfigurációja Auth Token használatával
 const szamlaClient = new Szamlazz.Client({
-  user: {
-    authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN
-  },
+  authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN,
   eInvoice: true,
   requestInvoiceDownload: false
 });
 
 const REVOLUT_API_URL = 'https://merchant.revolut.com/api/1.0';
 
-// Teszt végpont
 app.get('/', (req, res) => {
   res.send('Meta Ad Studio Revolut Backend fut!');
 });
@@ -35,7 +31,7 @@ app.post('/create-checkout-session', async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        amount: 199000, // 1 990 Ft fillérben (1990 * 100)
+        amount: 199000,
         currency: 'HUF',
         description: '1x Meta Hirdetési Csomag & Generálás',
         redirect_url: `${process.env.FRONTEND_URL}/?status=success`
@@ -55,7 +51,7 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// 2. Revolut Webhook – Számla kiállítása sikeres fizetés után
+// 2. Revolut Webhook – Automatikus Számlázz.hu E-számla
 app.post('/revolut-webhook', async (req, res) => {
   try {
     const event = req.body;
@@ -105,7 +101,7 @@ app.post('/revolut-webhook', async (req, res) => {
 
     res.status(200).send('OK');
   } catch (err) {
-    console.error('Webhook feldolgozási hiba:', err);
+    console.error('Webhook hiba:', err);
     res.status(500).send('Server Error');
   }
 });
