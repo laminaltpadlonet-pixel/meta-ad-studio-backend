@@ -5,23 +5,25 @@ const cors = require('cors');
 
 const app = express();
 
+// CORS engedélyezése a frontendhez
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-// Számlázz.hu Kliens
-const szamlaClient = new Szamlazzhu.Client({
+// Számlázz.js Kliens inicializálása
+const szamlaClient = new Szamlazz.Client({
   authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN,
   eInvoice: true,
   requestInvoiceDownload: false
 });
 
-const REVOLUT_API_URL = 'https://merchant.revolut.com/api/1.0'; // Éles Revolut API URL
+const REVOLUT_API_URL = 'https://merchant.revolut.com/api/1.0';
 
+// Teszt végpont
 app.get('/', (req, res) => {
   res.send('Meta Ad Studio Revolut Backend fut!');
 });
 
-// 1. Revolut Fizetési Megrendelés Létrehozása (1 990 Ft)
+// 1. Revolut Checkout Session létrehozása (1 990 Ft)
 app.post('/create-checkout-session', async (req, res) => {
   try {
     const response = await fetch(`${REVOLUT_API_URL}/orders`, {
@@ -31,7 +33,7 @@ app.post('/create-checkout-session', async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        amount: 199000, // 1 990 Ft fillérben/centben
+        amount: 199000, // 1 990 Ft fillérben (1990 * 100)
         currency: 'HUF',
         description: '1x Meta Hirdetési Csomag & Generálás',
         redirect_url: `${process.env.FRONTEND_URL}/?status=success`
@@ -41,10 +43,9 @@ app.post('/create-checkout-session', async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.message || 'Revolut hiba történt');
+      throw new Error(data.message || 'Revolut fizetési hiba történt');
     }
 
-    // Visszaküldjük a fizetési oldalt (checkout_url) a frontendnek
     res.json({ url: data.checkout_url });
   } catch (error) {
     console.error('Revolut Checkout Hiba:', error);
@@ -52,24 +53,23 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// 2. Revolut Webhook – Automatikus Számlázz.hu E-számla
+// 2. Revolut Webhook – Számla kiállítása sikeres fizetés után
 app.post('/revolut-webhook', async (req, res) => {
   try {
     const event = req.body;
 
-    // Ha a fizetés sikeresen megtörtént
     if (event.event === 'ORDER_COMPLETED') {
       const order = event.data;
       const customerEmail = order.customer?.email || 'vasarlo@email.hu';
       
       console.log(`[REVOLUT FIZETÉS SIKERES] Számla generálása: ${customerEmail}`);
 
-      const seller = new Szamlazzhu.Seller({
+      const seller = new Szamlazz.Seller({
         bank: { name: 'Revolut Bank', accountNumber: process.env.SELLER_IBAN || 'HU00000000000000000000000000' },
         email: { replyTo: process.env.SELLER_EMAIL || 'info@a-te-ceged.hu' }
       });
 
-      const buyer = new Szamlazzhu.Buyer({
+      const buyer = new Szamlazz.Buyer({
         name: order.customer?.name || 'Vásárló',
         email: customerEmail,
         sendEmail: true,
@@ -79,7 +79,7 @@ app.post('/revolut-webhook', async (req, res) => {
         address: 'Cím nem megadott'
       });
 
-      const item = new Szamlazzhu.Item({
+      const item = new Szamlazz.Item({
         label: 'Meta Hirdetés Generálási Szolgáltatás',
         quantity: 1,
         unit: 'db',
@@ -88,9 +88,9 @@ app.post('/revolut-webhook', async (req, res) => {
         itemComment: 'Automata AI Hirdetésgenerálás'
       });
 
-      const invoice = new Szamlazzhu.Invoice({
-        paymentMethod: Szamlazzhu.PaymentMethod.Bankcard,
-        currency: Szamlazzhu.Currency.HUF,
+      const invoice = new Szamlazz.Invoice({
+        paymentMethod: Szamlazz.PaymentMethod.Bankcard,
+        currency: Szamlazz.Currency.HUF,
         seller: seller,
         buyer: buyer,
         items: [item],
@@ -98,12 +98,12 @@ app.post('/revolut-webhook', async (req, res) => {
       });
 
       await szamlaClient.issueInvoice(invoice);
-      console.log(' Számlázz.hu E-számla sikeresen kiállítva!');
+      console.log(' Számlázz.js E-számla sikeresen kiállítva!');
     }
 
-    res.status(200).send('Webhook fogadva');
+    res.status(200).send('OK');
   } catch (err) {
-    console.error('Webhook hiba:', err);
+    console.error('Webhook feldolgozási hiba:', err);
     res.status(500).send('Server Error');
   }
 });
