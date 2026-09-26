@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const Szamlazzhu = require('szamlazzhu');
+const Szamlazzhu = require('szamlazz.hu');
 const cors = require('cors');
 
 const app = express();
