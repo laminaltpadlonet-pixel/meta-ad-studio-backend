@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch'); // Ha Node.js v18+ verziót használsz, ez a sor elhagyható
+
 
 const app = express();
 
