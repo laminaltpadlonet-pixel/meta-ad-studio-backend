@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require('express');
 const Szamlazz = require('szamlazz.js');
@@ -8,9 +9,11 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-// Számlázz.js Kliens helyes konfigurációja Auth Token használatával
+// Számlázz.js Kliens helyes inicializálása
 const szamlaClient = new Szamlazz.Client({
-  authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN,
+  user: {
+    authToken: process.env.SZAMLAZZ_HUB_AUTH_TOKEN
+  },
   eInvoice: true,
   requestInvoiceDownload: false
 });
@@ -51,7 +54,7 @@ app.post('/create-checkout-session', async (req, res) => {
   }
 });
 
-// 2. Revolut Webhook – Automatikus Számlázz.hu E-számla
+// 2. Revolut Webhook – Számla kiállítása sikeres fizetés után
 app.post('/revolut-webhook', async (req, res) => {
   try {
     const event = req.body;
