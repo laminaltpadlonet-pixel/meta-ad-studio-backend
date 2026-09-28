@@ -2,12 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
-
 const app = express();
 
 // 1. CORS BEÁLLÍTÁSOK (Kezeli a lezáró perjelet is a FRONTEND_URL-ben)
 const rawFrontendUrl = process.env.FRONTEND_URL || '*';
-const cleanedFrontendUrl = rawFrontendUrl.replace(/\/$/, ""); // Eltávolítja a lezáró perjelet, ha van[cite: 3]
+const cleanedFrontendUrl = rawFrontendUrl.replace(/\/$/, ""); // Eltávolítja a lezáró perjelet, ha van
 
 app.use(cors({
     origin: function (origin, callback) {
@@ -37,7 +36,7 @@ app.post('/create-checkout-session', async (req, res) => {
     try {
         const { companyName, offer, goal, location, budget } = req.body;
 
-        // Kérés küldése a Revolut Merchant API felé
+        // Kérés küldése a Revolut Merchant API felé a hiányzó redirect_url-lel
         const response = await fetch(`${REVOLUT_API_URL}/orders`, {
             method: 'POST',
             headers: {
@@ -48,7 +47,8 @@ app.post('/create-checkout-session', async (req, res) => {
             body: JSON.stringify({
                 amount: 199000, // 1 990 Ft (fillérben/centben megadva)
                 currency: 'HUF',
-                description: `Meta Ad Studio - ${companyName || 'Pro'}`
+                description: `Meta Ad Studio - ${companyName || 'Pro'}`,
+                redirect_url: `${cleanedFrontendUrl}/?status=success` // <--- ITT A VISSZATÉRÉSI CÍM A SIKERES FIZETÉSHEZ
             })
         });
 
@@ -72,7 +72,7 @@ app.post('/create-checkout-session', async (req, res) => {
     }
 });
 
-// 4. ALIAS ÁTIRÁNYÍTÁS: Ha a frontend még a régi /create-order címet hívja[cite: 5, 6]
+// 4. ALIAS ÁTIRÁNYÍTÁS: Ha a frontend még a régi /create-order címet hívja
 app.post('/create-order', (req, res, next) => {
     req.url = '/create-checkout-session';
     app._router.handle(req, res, next);
